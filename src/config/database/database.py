@@ -1,23 +1,27 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.orm import declarative_base
 import os
 
-# PostgreSQL connection (Docker)
+# Async PostgreSQL connection
 SQLALCHEMY_DATABASE_URL = (
-    f"postgresql://{os.getenv('SQL_USER')}:{os.getenv('SQL_PASSWORD')}"
+    f"postgresql+asyncpg://{os.getenv('SQL_USER')}:{os.getenv('SQL_PASSWORD')}"
     f"@postgres:5432/{os.getenv('SQL_DATABASE')}"
 )
 
-# SQLite fallback for development
-# SQLALCHEMY_DATABASE_URL = "sqlite:///./notifications.db"
+# For SQLite async (development):
+# SQLALCHEMY_DATABASE_URL = "sqlite+aiosqlite:///./notifications.db"
 
-engine = create_engine(
+engine = create_async_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_size=20,
     max_overflow=10,
-    pool_pre_ping=True
+    pool_pre_ping=True,
+    echo=True  #
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+AsyncSessionLocal = async_sessionmaker(
+                    autocommit=False,
+                    autoflush=False,
+                    bind=engine)
 
 Base = declarative_base()

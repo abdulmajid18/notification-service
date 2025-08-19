@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 @router.post(
     "/notifications/send",
     response_model=NotificationResponse,
-    status_code=status.HTTP_202_ACCEPTED  # 202 for async processing
+    status_code=status.HTTP_202_ACCEPTED
 )
 async def send_notification(payload: NotificationCreate):
     try:
@@ -24,7 +24,6 @@ async def send_notification(payload: NotificationCreate):
             }
         )
 
-        # Business logic would go here
         response = NotificationResponse(
             status="success",
             message="Notification queued",

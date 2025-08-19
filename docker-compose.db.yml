@@ -18,16 +18,20 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - dooinngs_network
+      - notify_network
 
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notification-api
     ports:
       - "8000:8000"
     environment:
       - SQL_USER=${SQL_USER:-postgres}
       - SQL_PASSWORD=${SQL_PASSWORD:-postgres}
       - SQL_DATABASE=${SQL_DATABASE:-notifications}
+      - SQL_HOST=postgres
     depends_on:
       postgres:
         condition: service_healthy

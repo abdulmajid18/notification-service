@@ -210,3 +210,10 @@ class RabbitMQConnection:
         except Exception as e:
             logger.error(f"Failed to send notification: {e}")
             return False
+
+rabbitmq_connection = RabbitMQConnection(
+    host='localhost',
+    port=5672,
+    username='guest',
+    password='guest'
+)

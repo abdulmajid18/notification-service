@@ -23,9 +23,9 @@ async def send_notification(payload: NotificationCreate):
             notification = Notification(
                 user_id=payload.user_id,
                 message=payload.message,
-                category=payload.category,
-                level=payload.level,
-                channels=payload.channels,
+                category=payload.category.value if hasattr(payload.category, "value") else str(payload.category),
+                level=payload.level.value if hasattr(payload.level, "value") else str(payload.level),
+                channels=[c.value if hasattr(c, "value") else str(c) for c in (payload.channels or ["email"])],
                 extra_metadata=payload.metadata,
             )
 

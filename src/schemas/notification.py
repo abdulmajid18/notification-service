@@ -36,21 +36,17 @@ class NotificationEvent:
 
 
 def create_event_from_payload(payload: Notification) -> List[NotificationEvent]:
-    """
-    Convert a Notification ORM object into one or more NotificationEvents
-    (one per channel).
-    """
     events = []
 
-    for channel in (payload.channels or ["email"]):
+    for channel in payload.channels or ["email"]:
         event = NotificationEvent(
             notification_id=str(payload.id),
             user_id=payload.user_id,
-            channel=str(channel.value),
-            severity=payload.level,
+            channel=str(channel),
+            severity=str(payload.level),
             message=payload.message,
-            category=payload.category.value if hasattr(payload.category, "value") else str(payload.category),
-            metadata=payload.metadata or {}
+            category=str(payload.category),
+            metadata=payload.extra_metadata or {}
         )
         events.append(event)
 

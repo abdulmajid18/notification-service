@@ -2,8 +2,12 @@
 import logging
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
-from src.schemas.notification import NotificationResponse, NotificationCreate
+from src.config.database.database import AsyncSessionLocal
+from src.models.notification import Notification
+from src.schemas.notification import NotificationResponse, NotificationCreate, create_event_from_payload
+from src.services.rabbitmq.connection import rabbitmq_connection
 
 router = APIRouter(prefix="/api/v1", tags=["Notifications"])
 logger = logging.getLogger(__name__)
@@ -14,35 +18,47 @@ logger = logging.getLogger(__name__)
     status_code=status.HTTP_202_ACCEPTED
 )
 async def send_notification(payload: NotificationCreate):
-    try:
-        logger.info(
-            "Received notification request",
-            extra={
-                "payload": payload.model_dump(),
-                "category": payload.category,
-                "user_id": payload.user_id
-            }
-        )
+    async with AsyncSessionLocal() as session:
+        try:
+            notification = Notification(
+                user_id=payload.user_id,
+                message=payload.message,
+                category=payload.category,
+                level=payload.level,
+                channels=payload.channels,
+                extra_metadata=payload.metadata,
+            )
 
-        response = NotificationResponse(
-            status="success",
-            message="Notification queued",
-            data=payload.model_dump()
-        )
+            session.add(notification)
+            await session.commit()
+            await session.refresh(notification)
 
-        logger.info(
-            "Notification processed successfully",
-            extra={"notification_id": "generated_id_here"}
-        )
-        return response
+            response = NotificationResponse(
+                status="success",
+                message="Notification queued",
+                data={**payload.model_dump(), "id": notification.id}
+            )
 
-    except Exception as e:
-        logger.error(
-            "Notification processing failed",
-            exc_info=e,
-            extra={"payload": payload.model_dump()}
-        )
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"message": "Internal server error"}
-        )
+            logger.info(
+                "Notification saved successfully",
+                extra={"notification_id": notification.id}
+            )
+
+        except SQLAlchemyError as e:
+            await session.rollback()
+            logger.error(
+                "Notification DB save failed",
+                exc_info=e,
+                extra={"payload": payload.model_dump()}
+            )
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"message": "Database error"}
+            )
+
+        try:
+            events = create_event_from_payload(notification)
+            for event in events:
+                rabbitmq_connection.send_notification(event)
+        except Exception as e:
+            logger.error("Failed to send RabbitMQ event", exc_info=e)

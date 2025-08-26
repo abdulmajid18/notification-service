@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import time
 from dataclasses import asdict
 from typing import List, Dict, Optional, Callable
@@ -50,6 +51,7 @@ class RabbitMQConnection:
             self.connection = pika.BlockingConnection(self.connection_params)
             self.channel = self.connection.channel()
             logger.info("Connected to RabbitMQ successfully")
+            return True
 
         except AMQPConnectionError as e:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
@@ -212,8 +214,8 @@ class RabbitMQConnection:
             return False
 
 rabbitmq_connection = RabbitMQConnection(
-    host='localhost',
+    host=os.getenv('RABBIT_HOST', 'rabbitmq'),
     port=5672,
-    username='guest',
-    password='guest'
+    username=os.getenv('RABBIT_USER', 'guest'),
+    password=os.getenv('RABBIT_PASSWORD', 'guest')
 )

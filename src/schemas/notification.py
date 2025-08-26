@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
+from src.models.notification import Notification
 from src.schemas.enums.notification import NotificationCategory, NotificationLevel, NotificationChannel
 
 
@@ -34,24 +35,21 @@ class NotificationEvent:
         self.routing_key = f"{self.severity}.{self.channel}"
 
 
-def create_event_from_payload(payload: NotificationCreate) -> List[NotificationEvent]:
+def create_event_from_payload(payload: Notification) -> List[NotificationEvent]:
     """
-    Convert NotificationCreate request into one or more NotificationEvents
+    Convert a Notification ORM object into one or more NotificationEvents
     (one per channel).
     """
     events = []
-    notification_id = str(uuid.uuid4())
 
-    level = payload.level.value if payload.level else NotificationLevel.NON_CRITICAL.value
-
-    for channel in (payload.channels or [NotificationChannel.EMAIL]):
+    for channel in (payload.channels or ["email"]):
         event = NotificationEvent(
-            notification_id=notification_id,
+            notification_id=str(payload.id),
             user_id=payload.user_id,
             channel=str(channel.value),
-            severity=level,
+            severity=payload.level,
             message=payload.message,
-            category=payload.category.value,
+            category=payload.category.value if hasattr(payload.category, "value") else str(payload.category),
             metadata=payload.metadata or {}
         )
         events.append(event)

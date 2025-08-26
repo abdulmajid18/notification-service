@@ -1,17 +1,14 @@
-from sqlalchemy import Column, Integer, String, Boolean, JSON, Enum
-from src.schemas.enums.notification import NotificationCategory, NotificationLevel
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
+from sqlalchemy import Column, Integer, String, JSON, Boolean
+from src.config.database import Base
 
 class Notification(Base):
     __tablename__ = "notifications"
 
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, index=True)
-    message = Column(String(500))
-    category = Column(Enum(NotificationCategory))
-    level = Column(Enum(NotificationLevel))
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    message = Column(String, nullable=False)
+    category = Column(String, nullable=False)
+    level = Column(String, nullable=False)
     is_read = Column(Boolean, default=False)
-    metadata = Column(JSON)
-    channels = Column(JSON)
+    extra_metadata = Column(JSON, nullable=True)
+    channels = Column(JSON, nullable=False)

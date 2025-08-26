@@ -4,6 +4,9 @@ from src.api import endpoints
 from src.config.database import engine, Base
 import logging
 
+from src.services.rabbitmq.connection import rabbitmq_connection
+from src.services.rabbitmq.consumers import start_rabbitmq_consumers
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -18,12 +21,27 @@ async def lifespan(app: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables created")
+
+        logger.info("Initializing RabbitMQ connection...")
+        if rabbitmq_connection.connect():
+            logger.info("RabbitMQ connected successfully")
+            if rabbitmq_connection.setup_infrastructure():
+                logger.info("RabbitMQ infrastructure setup complete")
+                start_rabbitmq_consumers()
+                logger.info("RabbitMQ consumers started")
+            else:
+                logger.error("Failed to setup RabbitMQ infrastructure")
+        else:
+            logger.error("Failed to connect to RabbitMQ")
     except Exception as e:
-        logger.error(f"Database initialization failed: {str(e)}")
+        logger.error(f"Application initialization failed: {str(e)}")
         raise
 
     yield
 
+    logger.info("Shutting down application...")
+    logger.info("Closing RabbitMQ connection...")
+    rabbitmq_connection.close()
     logger.info("Closing database connections...")
     await engine.dispose()
     logger.info("Database connections closed")

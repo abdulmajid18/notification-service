@@ -1,54 +1,100 @@
 import json
 import logging
-from typing import List, Dict
+import time
+from dataclasses import asdict
+from typing import List, Dict, Optional, Callable
 
 import pika
+from pika.exceptions import AMQPConnectionError, AMQPChannelError
+
+from src.schemas.notification import NotificationEvent
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class Connection:
+class RabbitMQConnection:
+    _instance: Optional['RabbitMQConnection'] = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self, host='localhost', port=5672, username='guest', password='guest'):
+        if hasattr(self, '_initialized'):
+            return
         self.connection_params = pika.ConnectionParameters(
             host=host,
             port=port,
-            credentials=pika.PlainCredentials(username, password)
+            credentials=pika.PlainCredentials(username, password),
+            heartbeat=600,
+            blocked_connection_timeout=300,
+            retry_delay=5,
+            connection_attempts=3
         )
-        self.connection = None
-        self.channel = None
+        self.connection: Optional[pika.BlockingConnection] = None
+        self.channel: Optional[pika.adapters.blocking_connection.BlockingChannel] = None
         self.exchange_name = 'notification_exchange'
         self.exchange_type = 'direct'
+        self._initialized = True
+        self._consuming = False
 
     def connect(self):
         """Establish connection to RabbitMQ"""
         try:
+            if self.connection and self.connection.is_open:
+                logger.info("RabbitMQ connection already established")
+                return True
+
             self.connection = pika.BlockingConnection(self.connection_params)
             self.channel = self.connection.channel()
             logger.info("Connected to RabbitMQ successfully")
-        except Exception as e:
-            logger.error(f"Failed to connect to RabbitMQ: {e}")
-            raise
 
-    def setup_exchange(self):
-        """Declare the direct exchange"""
+        except AMQPConnectionError as e:
+            logger.error(f"Failed to connect to RabbitMQ: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected connection error: {e}")
+            return False
+
+    def ensure_connection(self) -> bool:
+        """Ensure we have a valid connection, reconnect if needed"""
+        if not self.connection or self.connection.is_closed:
+            return self.connect()
+        return True
+
+    def setup_infrastructure(self) -> bool:
+        """Setup exchange and queues"""
         try:
+            if not self.ensure_connection():
+                return False
+
             self.channel.exchange_declare(
                 exchange=self.exchange_name,
                 exchange_type=self.exchange_type,
                 durable=True
             )
-            logger.info(f"Exchange '{self.exchange_name}' declared as '{self.exchange_type}'")
+            logger.info(f"Exchange '{self.exchange_name}' declared")
+
+            self.setup_queues()
+            return True
+
+        except AMQPChannelError as e:
+            logger.error(f"Channel error during setup: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Failed to declare exchange: {e}")
-            raise
+            logger.error(f"Unexpected setup error: {e}")
+            return False
 
     def create_queue(self, queue_name: str, routing_keys: List[str]):
         """Create a queue and bind it to the exchange with routing keys"""
         try:
-            # Declare queue
+            if not self.ensure_connection():
+                raise Exception("No RabbitMQ connection available")
+
             self.channel.queue_declare(queue=queue_name, durable=True)
 
-            # Bind queue to exchange with each routing key
             for routing_key in routing_keys:
                 self.channel.queue_bind(
                     exchange=self.exchange_name,
@@ -75,7 +121,7 @@ class Connection:
         for queue_name, routing_keys in queue_bindings.items():
             self.create_queue(queue_name, routing_keys)
 
-    def start_consumer(self, queue_name: str, callback):
+    def start_consumer(self, queue_name: str, callback: Callable):
         """Start a consumer for a specific queue"""
 
         def wrapped_callback(ch, method, properties, body):
@@ -87,22 +133,80 @@ class Connection:
                 logger.error(f"Error processing message: {e}")
                 ch.basic_nack(delivery_tag=method.delivery_tag)
 
-        self.channel.basic_consume(
-            queue=queue_name,
-            on_message_callback=wrapped_callback,
-            auto_ack=False
-        )
+        try:
+            if not self.ensure_connection():
+                raise Exception("No RabbitMQ connection available")
 
-    def start_all_consumers(self, callbacks: Dict[str, callable]):
+            self.channel.basic_consume(
+                queue=queue_name,
+                on_message_callback=wrapped_callback,
+                auto_ack=False
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to start consumer for {queue_name}: {e}")
+            return False
+
+    def start_all_consumers(self, callbacks: Dict[str, Callable]):
         """Start consumers for all queues"""
-        for queue_name, callback in callbacks.items():
-            self.start_consumer(queue_name, callback)
+        try:
+            for queue_name, callback in callbacks.items():
+                if not self.start_consumer(queue_name, callback):
+                    raise Exception(f"Failed to start consumer for {queue_name}")
 
-        logger.info("Starting consumers...")
-        self.channel.start_consuming()
+            logger.info("Starting consumers...")
+            self._consuming = True
+            self.channel.start_consuming()
+
+        except Exception as e:
+            logger.error(f"Failed to start consumers: {e}")
+            self._consuming = False
+            raise
+
+    def stop_consuming(self):
+        """Stop all consumers"""
+        if self.channel and self._consuming:
+            self.channel.stop_consuming()
+            self._consuming = False
+            logger.info("Stopped all consumers")
 
     def close(self):
-        """Close the connection"""
-        if self.connection and not self.connection.is_closed:
-            self.connection.close()
-            logger.info("Connection closed")
+        """Close the connection gracefully"""
+        try:
+            self.stop_consuming()
+            if self.connection and not self.connection.is_closed:
+                self.connection.close()
+                logger.info("RabbitMQ connection closed")
+        except Exception as e:
+            logger.error(f"Error closing connection: {e}")
+        finally:
+            self.connection = None
+            self.channel = None
+
+    def send_notification(self, event: NotificationEvent) -> bool:
+        """Send a notification to the exchange"""
+        try:
+            if not self.ensure_connection():
+                logger.error("Cannot send notification: No RabbitMQ connection")
+                return False
+
+            body = asdict(event)
+            body["timestamp"] = time.time()
+
+            self.channel.basic_publish(
+                exchange=self.exchange_name,
+                routing_key=event.routing_key,
+                body=json.dumps(body),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,  # Persistent
+                    content_type='application/json'
+                )
+            )
+
+            logger.info(f"Sent notification: {event.routing_key} - {event.message}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to send notification: {e}")
+            return False

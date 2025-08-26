@@ -4,10 +4,7 @@ from enum import Enum
 class NotificationLevel(str, Enum):
     """Urgency/importance levels for notifications"""
     CRITICAL = "critical"
-    HIGH = "high"
-    NORMAL = "normal"
-    LOW = "low"
-
+    NON_CRITICAL = "non_critical"
 
 class NotificationCategory(str, Enum):
     """Types of notifications with metadata"""
